@@ -32,7 +32,9 @@ npm install
 npm run dev
 ```
 
-Open `http://localhost:5173`. The analyzer calls the FastAPI `POST /predict` endpoint; performance and experiment views use the latest metrics recorded in the repository's MLflow runs.
+Open `http://localhost:5173`. The analyzer calls the FastAPI `POST /predict` endpoint. Performance and experiment views call the server-side `GET /mlflow/runs` endpoint, so MLflow tracking paths and credentials are never exposed to React. Run detail artifact links are served through the backend as well.
+
+The dashboard expects the API process to run from the project root so the default `MLFLOW_TRACKING_URI=file:./mlruns` resolves correctly. You can override `MLFLOW_TRACKING_URI` and `MLFLOW_EXPERIMENT_NAME` for a remote tracking server.
 
 ## MLflow and containers
 
