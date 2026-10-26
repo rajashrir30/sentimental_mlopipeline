@@ -1,0 +1,11 @@
+.git
+.venv
+.venv311
+.hf_cache
+__pycache__
+frontend/node_modules
+frontend/dist
+mlruns
+mlflow.db
+data
+*.pyc
