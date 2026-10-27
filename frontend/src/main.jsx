@@ -3,8 +3,10 @@ import { createRoot } from 'react-dom/client'
 import './styles.css'
 import './responsive.css'
 import './dashboard.css'
+ 
 
-const API = import.meta.env.VITE_API_URL || 'http://localhost:8000'
+const API = import.meta.env.VITE_API_URL || 'https://sentimental-mlopipeline.onrender.com';
+
 const metricNames = [['accuracy', 'Accuracy'], ['precision', 'Precision'], ['recall', 'Recall'], ['f1', 'F1-score']]
 const pct = value => typeof value === 'number' ? `${(value * 100).toFixed(1)}%` : '—'
 const date = value => value ? new Date(value).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' }) : '—'
