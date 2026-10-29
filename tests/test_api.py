@@ -3,7 +3,7 @@ from fastapi import HTTPException
 from pydantic import ValidationError
 
 import serving.app as api
-from serving.app import PredictionRequest, health, predict, ready
+from serving.app import PredictionRequest, dataset_insights, health, predict, ready
 
 
 def test_health_reports_loaded_model():
@@ -14,6 +14,13 @@ def test_health_reports_loaded_model():
 
 def test_ready_reports_available_model():
     assert ready() == {"status": "ready"}
+
+
+def test_dataset_insights_uses_the_processed_artifact():
+    payload = dataset_insights()
+    assert payload["total_samples"] > 0
+    assert set(payload["splits"]) == {"train", "validation", "test"}
+    assert payload["duplicate_texts"] >= 0
 
 
 def test_predict_returns_a_real_model_prediction():

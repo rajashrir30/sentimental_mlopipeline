@@ -5,7 +5,23 @@ import './responsive.css'
 import './dashboard.css'
  
 
-const API = import.meta.env.VITE_API_URL || '';
+const API = (import.meta.env.VITE_API_URL || '').replace(/\/+$/, '')
+
+async function fetchJson(path, options = {}, timeoutMs = 10000) {
+  const controller = new AbortController()
+  const timeout = window.setTimeout(() => controller.abort(), timeoutMs)
+  try {
+    const response = await fetch(`${API}${path}`, { ...options, signal: controller.signal })
+    const payload = await response.json().catch(() => ({}))
+    if (!response.ok) throw new Error(payload.detail || `Request failed (${response.status})`)
+    return payload
+  } catch (error) {
+    if (error.name === 'AbortError') throw new Error('The request timed out. The backend may be waking up or unavailable.')
+    throw error
+  } finally {
+    window.clearTimeout(timeout)
+  }
+}
 
 const metricNames = [['accuracy', 'Accuracy'], ['precision', 'Precision'], ['recall', 'Recall'], ['f1', 'F1-score']]
 const pct = value => typeof value === 'number' ? `${(value * 100).toFixed(1)}%` : '—'
@@ -24,9 +40,7 @@ function Analyzer() {
     if (!review) { setError('Enter a movie review before analyzing.'); return }
     setLoading(true); setError(''); setResult(null)
     try {
-      const response = await fetch(`${API}/predict`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text: review }) })
-      const payload = await response.json().catch(() => ({}))
-      if (!response.ok) throw new Error(payload.detail || 'The prediction request failed.')
+      const payload = await fetchJson('/predict', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text: review }) })
       setResult(payload)
     } catch (err) { setError(err.message || 'Could not reach the FastAPI service.') }
     finally { setLoading(false) }
@@ -38,7 +52,7 @@ function Analyzer() {
       {error && <div className="inline-error" role="alert">{error}</div>}
       {result && <div className={`result ${result.sentiment}`}><div><span className="result-label">PREDICTED SENTIMENT</span><strong>{pretty(result.sentiment)}</strong></div><div className="confidence"><span>Confidence</span><b>{pct(confidence)}</b><div className="bar"><i style={{ width: `${confidence * 100}%` }} /></div><small>Positive probability: {pct(result.positive_probability)}</small></div></div>}
     </div>
-    <div className="card flow-card"><div className="eyebrow">HOW IT WORKS</div><h2>From words to insight</h2><div className="flow"><div><span className="step blue">01</span><b>Your review</b><small>Text entered above</small></div><i>→</i><div><span className="step purple">02</span><b>FastAPI service</b><small>POST /predict</small></div><i>→</i><div><span className="step green">03</span><b>Prediction</b><small>Label + confidence</small></div></div><div className="service-status"><span className="pulse" /> API endpoint <code>localhost:8000</code><span className="online">● ready to connect</span></div></div>
+    <div className="card flow-card"><div className="eyebrow">HOW IT WORKS</div><h2>From words to insight</h2><div className="flow"><div><span className="step blue">01</span><b>Your review</b><small>Text entered above</small></div><i>→</i><div><span className="step purple">02</span><b>FastAPI service</b><small>POST /predict</small></div><i>→</i><div><span className="step green">03</span><b>Prediction</b><small>Label + confidence</small></div></div><div className="service-status"><span className="pulse" /> API endpoint <code>{API || 'same-origin'}</code><span className="online">● ready to connect</span></div></div>
   </section>
 }
 
@@ -74,7 +88,7 @@ function Experiments({ runs, loading, error, retry }) {
 
 function DatasetInsights() {
   const [data, setData] = useState(null); const [error, setError] = useState('');
-  useEffect(() => { fetch(`${API}/dataset/insights`).then(async response => { const payload = await response.json().catch(() => ({})); if (!response.ok) throw new Error(payload.detail || 'Dataset insights are unavailable.'); return payload }).then(setData).catch(error => setError(error.message)) }, [])
+  useEffect(() => { fetchJson('/dataset/insights').then(setData).catch(error => setError(error.message)) }, [])
   if (error) return <ErrorState message={error} retry={() => window.location.reload()} />
   if (!data) return <div className="state">Loading dataset insights…</div>
   const rows = [['Train', data.splits.train], ['Validation', data.splits.validation], ['Test', data.splits.test]]
@@ -83,14 +97,14 @@ function DatasetInsights() {
 
 function SystemStatus({ api }) {
   const [status, setStatus] = useState('checking');
-  useEffect(() => { Promise.all([fetch(`${api}/health`), fetch(`${api}/ready`)]).then(async ([healthResponse, readyResponse]) => { const health = await healthResponse.json().catch(() => ({})); setStatus(healthResponse.ok && readyResponse.ok && health.model_loaded ? 'ready' : 'degraded') }).catch(() => setStatus('offline')) }, [api]);
+  useEffect(() => { Promise.all([fetchJson('/health'), fetchJson('/ready')]).then(([health]) => setStatus(health.model_loaded ? 'ready' : 'degraded')).catch(() => setStatus('offline')) }, [api]);
   const label = status === 'ready' ? 'API ready' : status === 'degraded' ? 'Model not ready' : status === 'offline' ? 'API offline' : 'Checking API';
   return <span className={`api-pill ${status}`}><span className="green-dot" /> {label}</span>
 }
 
 function App() {
   const [page, setPage] = useState('analyzer'); const [menuOpen, setMenuOpen] = useState(false); const [runs, setRuns] = useState([]); const [runsLoading, setRunsLoading] = useState(false); const [runsError, setRunsError] = useState('')
-  const loadRuns = async () => { setRunsLoading(true); setRunsError(''); try { const response = await fetch(`${API}/mlflow/runs`); const data = await response.json().catch(() => ({})); if (!response.ok) throw new Error(data.detail || 'MLflow endpoint returned an error.'); setRuns(data.runs || []) } catch (error) { setRunsError(error.message || 'Could not reach the MLflow endpoint.') } finally { setRunsLoading(false) } }
+  const loadRuns = async () => { setRunsLoading(true); setRunsError(''); try { const data = await fetchJson('/mlflow/runs'); setRuns(data.runs || []) } catch (error) { setRunsError(error.message || 'Could not reach the MLflow endpoint.'); setRuns([]) } finally { setRunsLoading(false) } }
   useEffect(() => { if (page === 'performance' || page === 'experiments') loadRuns() }, [page])
   const navigate = next => { setPage(next); setMenuOpen(false) }; const title = page === 'analyzer' ? 'Sentiment analyzer' : page === 'performance' ? 'Model performance' : page === 'experiments' ? 'Experiments' : 'Dataset insights'
   return <div className="app"><div className={`mobile-overlay ${menuOpen ? 'show' : ''}`} onClick={() => setMenuOpen(false)} /><aside className={menuOpen ? 'sidebar-open' : ''}><div className="brand"><div className="brand-mark">✦</div><span>sentiment<span className="brand-accent">.lab</span></span><button className="close-menu" onClick={() => setMenuOpen(false)}>×</button></div><div className="workspace"><span className="workspace-dot" /> MLOps workspace <span>⌄</span></div><nav><button className={page === 'analyzer' ? 'nav-active' : ''} onClick={() => navigate('analyzer')}><Icon>◉</Icon>Sentiment analyzer</button><button className={page === 'performance' ? 'nav-active' : ''} onClick={() => navigate('performance')}><Icon>◒</Icon>Model performance</button><button className={page === 'experiments' ? 'nav-active' : ''} onClick={() => navigate('experiments')}><Icon>⌁</Icon>Experiments <span className="optional">live</span></button><button className={page === 'dataset' ? 'nav-active' : ''} onClick={() => navigate('dataset')}>Dataset insights</button></nav><div className="sidebar-bottom"><div className="model-chip"><span className="chip-icon">▣</span><div><b>Baseline model</b><small>artifacts/baseline.joblib</small></div><span className="green-dot" /></div><small className="version">Sentiment MLOps Pipeline · v1.0</small></div></aside><main><header><button className="mobile-menu" onClick={() => setMenuOpen(true)} aria-label="Open navigation">☰</button><div className="breadcrumb">PROJECT <b>/</b> SENTIMENT MLOPS <b>/</b> <strong>{page}</strong></div><div className="header-actions"><SystemStatus api={API} /><a href={`${API}/docs`} target="_blank" rel="noreferrer">Open API docs ↗</a></div></header><div className="content"><div className="title-row"><div><h1>{title}</h1><p>{page === 'analyzer' ? 'Analyze a review with your production-ready sentiment model.' : page === 'performance' ? 'Compare actual validation and test results from MLflow.' : page === 'experiments' ? 'Track and inspect the training history behind your models.' : 'Review measured data quality from the processed dataset.'}</p></div><div className="date-badge">⌁ Server-backed data</div></div>{page === 'analyzer' && <Analyzer />}{page === 'performance' && <Performance runs={runs} loading={runsLoading} error={runsError} retry={loadRuns} />}{page === 'experiments' && <Experiments runs={runs} loading={runsLoading} error={runsError} retry={loadRuns} />}{page === 'dataset' && <DatasetInsights />}</div></main></div>

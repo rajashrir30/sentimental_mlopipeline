@@ -1,5 +1,7 @@
 # sentiment-mlops-pipeline
 
+[![CI](https://github.com/rajashrir30/sentimental_mlopipeline/actions/workflows/ci.yml/badge.svg)](https://github.com/rajashrir30/sentimental_mlopipeline/actions/workflows/ci.yml)
+
 An end-to-end IMDB sentiment classification project with a reproducible preprocessing artifact, a scikit-learn baseline, a TensorFlow/Keras LSTM, MLflow tracking, and a FastAPI endpoint.
 
 ```mermaid
@@ -57,6 +59,19 @@ not download data when the dashboard loads.
 
 The dashboard expects the API process to run from the project root so the default `MLFLOW_TRACKING_URI=file:./mlruns` resolves correctly. You can override `MLFLOW_TRACKING_URI` and `MLFLOW_EXPERIMENT_NAME` for a remote tracking server.
 
+The frontend uses relative API paths in the production image, so the bundled
+React app and FastAPI service communicate through the same origin. During Vite
+development, `frontend/vite.config.js` proxies those paths to
+`http://localhost:8000`. If the frontend is deployed separately, set
+`VITE_API_URL` at build time to the backend origin; trailing slashes are
+normalized automatically.
+
+When `mlruns/` is not present in a deployment image or mounted volume, the
+performance and experiments pages show an unavailable-data error with a retry
+action. They do not fabricate metrics. The local Docker Compose setup mounts
+`mlruns/` read-only, but the Render deployment must provide its own persistent
+tracking storage if production experiment history is required.
+
 ## MLflow and containers
 
 Training runs write to `./mlruns` by default. To use a server, set `MLFLOW_TRACKING_URI=http://localhost:5000` before training. Start the tracking server and API with `docker compose up --build`; train the model first so `artifacts/baseline.joblib` exists for the serving image.
@@ -84,4 +99,17 @@ Run the regression checks with `pytest -q` after installing the project
 requirements. The tests cover text normalization, API readiness, and a real
 prediction from the saved baseline artifact. Build the dashboard with
 `cd frontend && npm run build`.
+
+## Continuous integration
+
+GitHub Actions runs on pushes to `main` and pull requests targeting `main`.
+The workflow uses Python 3.11, matching the serving and training Dockerfiles,
+and Node.js 22, matching the frontend build image. It installs the focused
+`requirements-dev.txt` test environment, compiles the Python application and
+source files, runs pytest, installs the locked frontend dependencies with
+`npm ci`, builds the Vite frontend, and validates the serving Docker image.
+
+CI does not download the IMDB dataset, retrain either model, start MLflow, or
+deploy to production. No secrets or external provider credentials are required
+by these checks.
 
