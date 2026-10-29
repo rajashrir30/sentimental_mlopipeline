@@ -2,7 +2,10 @@
 from __future__ import annotations
 
 import os
+import logging
+import json
 from pathlib import Path
+from statistics import mean, median
 from typing import Any
 
 import joblib
@@ -11,7 +14,18 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from text_utils import clean_text
 
-MODEL_PATH = Path(os.getenv("MODEL_PATH", "artifacts/baseline.joblib"))
+LOGGER = logging.getLogger("sentiment_api")
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+
+
+def _resolve_project_path(value: str) -> Path:
+    """Resolve relative paths from the project root, regardless of cwd."""
+    path = Path(value)
+    return path if path.is_absolute() else PROJECT_ROOT / path
+
+
+MODEL_PATH = _resolve_project_path(os.getenv("MODEL_PATH", "artifacts/baseline.joblib"))
+DATA_PATH = _resolve_project_path(os.getenv("DATA_PATH", "data/processed/imdb.json"))
 MLFLOW_TRACKING_URI = os.getenv("MLFLOW_TRACKING_URI", "file:./mlruns")
 MLFLOW_EXPERIMENT_NAME = os.getenv("MLFLOW_EXPERIMENT_NAME", "sentiment-mlops-pipeline")
 app = FastAPI(title="Sentiment MLOps Pipeline", version="1.0.0")
@@ -23,7 +37,11 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-model = joblib.load(MODEL_PATH) if MODEL_PATH.exists() else None
+try:
+    model = joblib.load(MODEL_PATH) if MODEL_PATH.exists() else None
+except Exception:
+    LOGGER.exception("Could not load model artifact: %s", MODEL_PATH)
+    model = None
 
 
 def _mlflow_client():
@@ -86,16 +104,62 @@ def _serialize_run(client: Any, run: Any) -> dict[str, Any]:
 @app.get("/mlflow/runs")
 def mlflow_runs():
     """Return sanitized run metadata for the dashboard from the configured MLflow store."""
-    client = _mlflow_client()
-    experiment = client.get_experiment_by_name(MLFLOW_EXPERIMENT_NAME)
+    try:
+        client = _mlflow_client()
+        experiment = client.get_experiment_by_name(MLFLOW_EXPERIMENT_NAME)
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail="MLflow tracking data is unavailable") from exc
     if experiment is None:
         return {"experiment": MLFLOW_EXPERIMENT_NAME, "runs": []}
-    runs = client.search_runs(
-        experiment_ids=[experiment.experiment_id],
-        order_by=["attribute.start_time DESC"],
-        max_results=500,
-    )
-    return {"experiment": experiment.name, "experiment_id": experiment.experiment_id, "runs": [_serialize_run(client, run) for run in runs]}
+    try:
+        runs = client.search_runs(
+            experiment_ids=[experiment.experiment_id],
+            order_by=["attribute.start_time DESC"],
+            max_results=500,
+        )
+        serialized = [_serialize_run(client, run) for run in runs]
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail="MLflow tracking data is unavailable") from exc
+    return {"experiment": experiment.name, "experiment_id": experiment.experiment_id, "runs": serialized}
+
+
+@app.get("/dataset/insights")
+def dataset_insights():
+    """Return reproducible statistics from the existing processed dataset artifact."""
+    if not DATA_PATH.exists():
+        raise HTTPException(status_code=404, detail="Processed dataset is not available; run preprocessing first")
+    try:
+        payload = json.loads(DATA_PATH.read_text(encoding="utf-8"))
+        splits = {}
+        all_texts: list[str] = []
+        all_labels: list[int] = []
+        for split in ("train", "validation", "test"):
+            texts = [str(item) for item in payload[split]["text"]]
+            labels = [int(item) for item in payload[split]["label"]]
+            lengths = [len(text.split()) for text in texts]
+            splits[split] = {
+                "samples": len(texts),
+                "positive": sum(label == 1 for label in labels),
+                "negative": sum(label == 0 for label in labels),
+                "empty_reviews": sum(not text.strip() for text in texts),
+                "average_words": round(mean(lengths), 2) if lengths else 0,
+                "median_words": median(lengths) if lengths else 0,
+            }
+            all_texts.extend(texts)
+            all_labels.extend(labels)
+        return {
+            "source": "processed dataset artifact",
+            "seed": payload.get("seed"),
+            "total_samples": len(all_texts),
+            "duplicate_texts": len(all_texts) - len(set(all_texts)),
+            "label_distribution": {
+                "positive": sum(label == 1 for label in all_labels),
+                "negative": sum(label == 0 for label in all_labels),
+            },
+            "splits": splits,
+        }
+    except (KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
+        raise HTTPException(status_code=503, detail="Processed dataset artifact is invalid") from exc
 
 
 @app.get("/mlflow/runs/{run_id}")
@@ -128,16 +192,35 @@ class PredictionRequest(BaseModel):
     text: str = Field(min_length=1, max_length=20_000)
 
 
+class PredictionResponse(BaseModel):
+    sentiment: str
+    positive_probability: float = Field(ge=0, le=1)
+
+
 @app.get("/health")
 def health():
-    return {"status": "ok", "model_loaded": model is not None}
+    return {
+        "status": "ok" if model is not None else "degraded",
+        "model_loaded": model is not None,
+    }
 
 
-@app.post("/predict")
+@app.get("/ready")
+def ready():
+    """Kubernetes/load-balancer friendly readiness probe."""
+    if model is None:
+        raise HTTPException(status_code=503, detail="Model artifact is not available")
+    return {"status": "ready"}
+
+
+@app.post("/predict", response_model=PredictionResponse)
 def predict(request: PredictionRequest):
     if model is None:
         raise HTTPException(status_code=503, detail="Model artifact is not available")
-    probability = float(model.predict_proba([clean_text(request.text)])[0, 1])
+    cleaned = clean_text(request.text)
+    if not cleaned:
+        raise HTTPException(status_code=422, detail="Text must contain at least one usable character")
+    probability = float(model.predict_proba([cleaned])[0, 1])
     return {"sentiment": "positive" if probability >= 0.5 else "negative", "positive_probability": probability}
 
 

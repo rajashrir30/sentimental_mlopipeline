@@ -3,7 +3,7 @@ WORKDIR /frontend
 COPY frontend/package*.json ./
 RUN npm ci
 COPY frontend ./
-ENV VITE_API_URL=ENV VITE_API_URL=https://sentimental-mlopipeline.onrender.com
+ENV VITE_API_URL=/
 RUN npm run build
 
 FROM python:3.11-slim AS python-deps
@@ -20,5 +20,10 @@ COPY artifacts artifacts
 COPY --from=frontend-build /frontend/dist frontend/dist
 ENV MODEL_PATH=artifacts/baseline.joblib
 ENV MLFLOW_TRACKING_URI=file:./mlruns
+RUN addgroup --system app && adduser --system --ingroup app app \
+    && chown -R app:app /app
+USER app
 EXPOSE 8000
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+    CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/ready')"
 CMD ["uvicorn", "serving.app:app", "--host", "0.0.0.0", "--port", "8000"]

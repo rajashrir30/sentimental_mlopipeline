@@ -6,6 +6,11 @@ services:
     volumes:
       - ./mlruns:/mlruns
     command: mlflow server --host 0.0.0.0 --port 5000 --backend-store-uri /mlruns
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:5000/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
   serving:
     build:
       context: .
@@ -14,6 +19,10 @@ services:
       - "8000:8000"
     environment:
       MODEL_PATH: artifacts/baseline.joblib
+      MLFLOW_TRACKING_URI: file:./mlruns
+    volumes:
+      - ./mlruns:/app/mlruns:ro
     depends_on:
-      - mlflow
+      mlflow:
+        condition: service_healthy
 

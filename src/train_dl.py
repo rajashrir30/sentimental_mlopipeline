@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import sys
+import time
 from pathlib import Path
 
 import mlflow
@@ -21,6 +22,7 @@ from preprocess import DEFAULT_OUTPUT, load_processed
 
 
 def train(data_path=DEFAULT_OUTPUT, model_path="artifacts/lstm.keras", epochs=3):
+    started_at = time.perf_counter()
     data = load_processed(data_path)
     tokenizer = Tokenizer(num_words=20_000, oov_token="<OOV>")
     tokenizer.fit_on_texts(data["train"]["text"])
@@ -48,7 +50,10 @@ def train(data_path=DEFAULT_OUTPUT, model_path="artifacts/lstm.keras", epochs=3)
         log_metrics_and_artifact(
             {**{f"validation_{k}": v for k, v in validation_metrics.items()},
              **{f"test_{k}": v for k, v in metrics.items()}},
-            {"model": "lstm", "epochs": epochs, "max_len": 250}, model_path,
+            {"model": "lstm", "epochs": epochs, "max_len": 250, "seed": 42,
+             "train_samples": len(y_train), "validation_samples": len(y_val),
+             "test_samples": len(y_test),
+             "training_seconds": round(time.perf_counter() - started_at, 3)}, model_path,
         )
         mlflow.log_artifact(str(tokenizer_path))
     result = {"validation": validation_metrics, "test": metrics}

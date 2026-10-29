@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import sys
+import time
 from pathlib import Path
 
 import joblib
@@ -18,6 +19,7 @@ from preprocess import DEFAULT_OUTPUT, load_processed
 
 
 def train(data_path=DEFAULT_OUTPUT, model_path="artifacts/baseline.joblib"):
+    started_at = time.perf_counter()
     data = load_processed(data_path)
     def make_model(c):
         return Pipeline([
@@ -49,7 +51,11 @@ def train(data_path=DEFAULT_OUTPUT, model_path="artifacts/baseline.joblib"):
         log_metrics_and_artifact(
             {**{f"validation_{k}": v for k, v in validation_metrics.items()},
              **{f"test_{k}": v for k, v in metrics.items()}},
-            {"model": "logistic_regression", "features": "tfidf", "best_c": best_c},
+            {"model": "logistic_regression", "features": "tfidf", "best_c": best_c,
+             "seed": 42, "train_samples": len(data["train"]["text"]),
+             "validation_samples": len(data["validation"]["text"]),
+             "test_samples": len(data["test"]["text"]),
+             "training_seconds": round(time.perf_counter() - started_at, 3)},
             model_path,
         )
     result = {"validation": validation_metrics, "test": metrics, "best_c": best_c}
