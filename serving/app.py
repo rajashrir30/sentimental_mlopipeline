@@ -37,11 +37,18 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-try:
-    model = joblib.load(MODEL_PATH) if MODEL_PATH.exists() else None
-except Exception:
-    LOGGER.exception("Could not load model artifact: %s", MODEL_PATH)
-    model = None
+def _load_model(path: Path):
+    """Load the serving artifact once and degrade safely when it is unavailable."""
+    if not path.exists():
+        return None
+    try:
+        return joblib.load(path)
+    except Exception:
+        LOGGER.exception("Could not load model artifact: %s", path)
+        return None
+
+
+model = _load_model(MODEL_PATH)
 
 
 def _mlflow_client():
@@ -110,7 +117,12 @@ def mlflow_runs():
     except Exception as exc:
         raise HTTPException(status_code=503, detail="MLflow tracking data is unavailable") from exc
     if experiment is None:
-        return {"experiment": MLFLOW_EXPERIMENT_NAME, "runs": []}
+        return {
+            "experiment": MLFLOW_EXPERIMENT_NAME,
+            "available": False,
+            "message": "The configured MLflow experiment is not available in this deployment.",
+            "runs": [],
+        }
     try:
         runs = client.search_runs(
             experiment_ids=[experiment.experiment_id],
@@ -120,7 +132,7 @@ def mlflow_runs():
         serialized = [_serialize_run(client, run) for run in runs]
     except Exception as exc:
         raise HTTPException(status_code=503, detail="MLflow tracking data is unavailable") from exc
-    return {"experiment": experiment.name, "experiment_id": experiment.experiment_id, "runs": serialized}
+    return {"experiment": experiment.name, "experiment_id": experiment.experiment_id, "available": True, "runs": serialized}
 
 
 @app.get("/dataset/insights")
