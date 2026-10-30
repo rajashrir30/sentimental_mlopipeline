@@ -1,0 +1,6 @@
+{
+  "seed": 42,
+  "train": {"text": ["great film", "bad film"], "label": [1, 0]},
+  "validation": {"text": ["excellent acting"], "label": [1]},
+  "test": {"text": ["boring story"], "label": [0]}
+}
