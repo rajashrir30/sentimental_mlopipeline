@@ -1,0 +1,4 @@
+# CI and local backend test dependencies.
+-r serving/requirements.txt
+pytest>=8,<9
+httpx>=0.27,<1
