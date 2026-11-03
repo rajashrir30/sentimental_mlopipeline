@@ -14,7 +14,10 @@ client = TestClient(api.app)
 def test_health_endpoint():
     response = client.get("/health")
     assert response.status_code == 200
-    assert response.json() == {"status": "ok", "model_loaded": True}
+    payload = response.json()
+    assert payload["status"] == "ok"
+    assert payload["model_loaded"] is True
+    assert payload["database"]["configured"] is False
 
 
 def test_ready_endpoint():
@@ -46,15 +49,17 @@ def test_predict_returns_a_real_model_prediction():
     result = predict(PredictionRequest(text="A warm, funny and beautifully acted film."))
     assert result["sentiment"] in {"positive", "negative"}
     assert 0 <= result["positive_probability"] <= 1
+    assert result["history_saved"] is False
 
 
 def test_prediction_endpoint_response_structure():
     response = client.post("/predict", json={"text": "A warm, funny and beautifully acted film."})
     assert response.status_code == 200
     payload = response.json()
-    assert set(payload) == {"sentiment", "positive_probability"}
+    assert set(payload) == {"sentiment", "positive_probability", "history_saved"}
     assert payload["sentiment"] in {"positive", "negative"}
     assert isinstance(payload["positive_probability"], float)
+    assert payload["history_saved"] is False
 
 
 @pytest.mark.parametrize("payload", [{}, {"text": ""}, {"text": "x" * 20_001}])
@@ -66,6 +71,76 @@ def test_prediction_endpoint_rejects_invalid_input(payload):
 def test_prediction_endpoint_rejects_whitespace_input():
     response = client.post("/predict", json={"text": "   "})
     assert response.status_code == 422
+
+
+def test_prediction_history_requires_database_configuration():
+    response = client.get("/predictions/history")
+    assert response.status_code == 503
+    assert "DATABASE_URL" in response.json()["detail"]
+
+
+def test_prediction_history_supports_pagination_and_filtering(monkeypatch):
+    observed = {}
+
+    def fake_list_predictions(page, page_size, sentiment):
+        observed.update(page=page, page_size=page_size, sentiment=sentiment)
+        return {
+            "items": [
+                {
+                    "id": 1,
+                    "text": "great film",
+                    "sentiment": "positive",
+                    "positive_probability": 0.95,
+                    "created_at": "2026-01-01T00:00:00Z",
+                }
+            ],
+            "page": page,
+            "page_size": page_size,
+            "total": 1,
+            "total_pages": 1,
+            "sentiment": sentiment,
+        }
+
+    monkeypatch.setattr(api, "list_predictions", fake_list_predictions)
+    response = client.get("/predictions/history?page=2&page_size=5&sentiment=positive")
+    assert response.status_code == 200
+    assert observed == {"page": 2, "page_size": 5, "sentiment": "positive"}
+    assert response.json()["items"][0]["sentiment"] == "positive"
+
+
+def test_monitoring_reports_database_unavailable_without_configuration():
+    response = client.get("/monitoring/report")
+    assert response.status_code == 503
+    assert "DATABASE_URL" in response.json()["detail"]
+
+
+def test_monitoring_returns_insufficient_data_without_claiming_accuracy(monkeypatch):
+    monkeypatch.setattr(
+        api,
+        "build_monitoring_report",
+        lambda model: {
+            "status": "insufficient_data",
+            "message": "At least 30 current and reference rows are required.",
+            "current_rows": 2,
+            "reference_rows": 4,
+            "accuracy_monitored": False,
+            "evidently": {"available": False, "report_generated": False},
+        },
+    )
+    response = client.get("/monitoring/report")
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["status"] == "insufficient_data"
+    assert payload["accuracy_monitored"] is False
+
+
+def test_monitoring_feature_frame_contains_text_and_prediction_signals():
+    from serving.monitoring import _features
+
+    frame = _features(["great film!", "bad film."], ["positive", "negative"], [0.9, 0.1])
+    assert list(frame["sentiment"]) == ["positive", "negative"]
+    assert list(frame["text_length_words"]) == [2, 2]
+    assert "punctuation_rate" in frame
 
 
 def test_prediction_endpoint_returns_503_when_model_is_missing(monkeypatch):

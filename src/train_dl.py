@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import argparse
+import os
+import random
 import sys
 import time
 from pathlib import Path
@@ -23,13 +25,22 @@ from preprocess import DEFAULT_OUTPUT, load_processed
 
 def train(data_path=DEFAULT_OUTPUT, model_path="artifacts/lstm.keras", epochs=3):
     started_at = time.perf_counter()
+    # Keep training reproducible as far as TensorFlow and the host hardware
+    # permit. Deterministic kernels can reduce throughput.
+    os.environ.setdefault("PYTHONHASHSEED", "42")
+    random.seed(42)
+    np.random.seed(42)
+    try:
+        tf.config.experimental.enable_op_determinism()
+    except (AttributeError, RuntimeError):
+        pass
+    tf.random.set_seed(42)
     data = load_processed(data_path)
     tokenizer = Tokenizer(num_words=20_000, oov_token="<OOV>")
     tokenizer.fit_on_texts(data["train"]["text"])
     encode = lambda split: pad_sequences(tokenizer.texts_to_sequences(data[split]["text"]), maxlen=250, padding="post", truncating="post")
     x_train, x_val, x_test = (encode(s) for s in ("train", "validation", "test"))
     y_train, y_val, y_test = (np.asarray(data[s]["label"]) for s in ("train", "validation", "test"))
-    tf.random.set_seed(42)
     model = Sequential([Embedding(20_000, 64, mask_zero=True), LSTM(64), Dense(1, activation="sigmoid")])
     model.compile(optimizer="adam", loss="binary_crossentropy", metrics=["accuracy"])
     model.fit(
@@ -47,12 +58,15 @@ def train(data_path=DEFAULT_OUTPUT, model_path="artifacts/lstm.keras", epochs=3)
     tokenizer_path.write_text(tokenizer.to_json(), encoding="utf-8")
     configure_mlflow()
     with mlflow.start_run(run_name="keras-lstm"):
+        total_samples = sum(len(data[split]["text"]) for split in ("train", "validation", "test"))
         log_metrics_and_artifact(
             {**{f"validation_{k}": v for k, v in validation_metrics.items()},
              **{f"test_{k}": v for k, v in metrics.items()}},
             {"model": "lstm", "epochs": epochs, "max_len": 250, "seed": 42,
              "train_samples": len(y_train), "validation_samples": len(y_val),
              "test_samples": len(y_test),
+             "dataset": "imdb", "dataset_seed": data.get("seed", 42),
+             "dataset_total_samples": total_samples,
              "training_seconds": round(time.perf_counter() - started_at, 3)}, model_path,
         )
         mlflow.log_artifact(str(tokenizer_path))

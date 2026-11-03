@@ -57,6 +57,25 @@ The API also exposes `GET /dataset/insights`, which reads the existing
 counts, duplicate counts, empty reviews, and review-length statistics. It does
 not download data when the dashboard loads.
 
+Prediction history is optional PostgreSQL persistence. Set `DATABASE_URL` to a
+server-side `postgresql+psycopg://...` connection string to save cleaned review
+text, sentiment, positive probability, and UTC timestamp values. The API
+provides `GET /predictions/history?page=1&page_size=20&sentiment=positive` with
+pagination and filtering. Database credentials never reach the React bundle.
+If PostgreSQL is not configured or temporarily unavailable, `/predict` still
+returns the model result with `history_saved: false`, while the history page
+shows an unavailable state.
+
+The monitoring page uses stored prediction history and the configured reference
+reviews to compare text-shape features (length, vocabulary diversity, and
+punctuation) and prediction distributions. `GET /monitoring/report` returns an
+Evidently data-drift summary when enough rows and the Evidently dependency are
+available. Set `MONITORING_REFERENCE_PATH`, `MONITORING_MIN_ROWS`, and
+`MONITORING_CURRENT_ROWS` as needed. With too few rows, the endpoint reports
+`insufficient_data` instead of producing an unreliable report. Prediction
+history has no ground-truth labels, so this monitoring does not claim to track
+accuracy, precision, recall, or F1.
+
 The dashboard expects the API process to run from the project root so the default `MLFLOW_TRACKING_URI=file:./mlruns` resolves correctly. You can override `MLFLOW_TRACKING_URI` and `MLFLOW_EXPERIMENT_NAME` for a remote tracking server.
 
 The frontend uses relative API paths in the production image, so the bundled

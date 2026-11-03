@@ -48,6 +48,7 @@ def train(data_path=DEFAULT_OUTPUT, model_path="artifacts/baseline.joblib"):
     joblib.dump(model, model_path)
     configure_mlflow()
     with mlflow.start_run(run_name="tfidf-logistic-regression"):
+        total_samples = sum(len(data[split]["text"]) for split in ("train", "validation", "test"))
         log_metrics_and_artifact(
             {**{f"validation_{k}": v for k, v in validation_metrics.items()},
              **{f"test_{k}": v for k, v in metrics.items()}},
@@ -55,6 +56,9 @@ def train(data_path=DEFAULT_OUTPUT, model_path="artifacts/baseline.joblib"):
              "seed": 42, "train_samples": len(data["train"]["text"]),
              "validation_samples": len(data["validation"]["text"]),
              "test_samples": len(data["test"]["text"]),
+             "dataset": "imdb",
+             "dataset_seed": data.get("seed", 42),
+             "dataset_total_samples": total_samples,
              "training_seconds": round(time.perf_counter() - started_at, 3)},
             model_path,
         )

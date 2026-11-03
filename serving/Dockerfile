@@ -15,6 +15,8 @@ FROM python:3.11-slim AS runtime
 WORKDIR /app
 COPY --from=python-deps /install /usr/local
 COPY serving/app.py serving/app.py
+COPY serving/database.py serving/database.py
+COPY serving/monitoring.py serving/monitoring.py
 COPY text_utils.py text_utils.py
 COPY artifacts artifacts
 COPY --from=frontend-build /frontend/dist frontend/dist
@@ -27,3 +29,5 @@ EXPOSE 8000
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
     CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/ready')"
 CMD ["uvicorn", "serving.app:app", "--host", "0.0.0.0", "--port", "8000"]
+
+

@@ -4,15 +4,18 @@ from __future__ import annotations
 import os
 import logging
 import json
+import time
 from pathlib import Path
 from statistics import mean, median
-from typing import Any
+from typing import Any, Literal
 
 import joblib
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from text_utils import clean_text
+from serving.database import DatabaseUnavailable, database_status, list_predictions, record_prediction
+from serving.monitoring import MonitoringUnavailable, build_monitoring_report
 
 LOGGER = logging.getLogger("sentiment_api")
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -37,6 +40,28 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.middleware("http")
+async def request_logging(request: Request, call_next):
+    """Log request outcomes without logging review text or credentials."""
+    started = time.perf_counter()
+    try:
+        response = await call_next(request)
+    except Exception:
+        LOGGER.exception("request_failed method=%s path=%s", request.method, request.url.path)
+        raise
+    elapsed_ms = round((time.perf_counter() - started) * 1000, 2)
+    LOGGER.info(
+        "request method=%s path=%s status=%s duration_ms=%s",
+        request.method,
+        request.url.path,
+        response.status_code,
+        elapsed_ms,
+    )
+    return response
+
+
 def _load_model(path: Path):
     """Load the serving artifact once and degrade safely when it is unavailable."""
     if not path.exists():
@@ -207,6 +232,24 @@ class PredictionRequest(BaseModel):
 class PredictionResponse(BaseModel):
     sentiment: str
     positive_probability: float = Field(ge=0, le=1)
+    history_saved: bool
+
+
+class PredictionHistoryItem(BaseModel):
+    id: int
+    text: str
+    sentiment: Literal["positive", "negative"]
+    positive_probability: float = Field(ge=0, le=1)
+    created_at: Any
+
+
+class PredictionHistoryResponse(BaseModel):
+    items: list[PredictionHistoryItem]
+    page: int
+    page_size: int
+    total: int
+    total_pages: int
+    sentiment: Literal["positive", "negative"] | None = None
 
 
 @app.get("/health")
@@ -214,6 +257,7 @@ def health():
     return {
         "status": "ok" if model is not None else "degraded",
         "model_loaded": model is not None,
+        "database": database_status(),
     }
 
 
@@ -233,7 +277,41 @@ def predict(request: PredictionRequest):
     if not cleaned:
         raise HTTPException(status_code=422, detail="Text must contain at least one usable character")
     probability = float(model.predict_proba([cleaned])[0, 1])
-    return {"sentiment": "positive" if probability >= 0.5 else "negative", "positive_probability": probability}
+    sentiment = "positive" if probability >= 0.5 else "negative"
+    history_saved = False
+    try:
+        record_prediction(cleaned, sentiment, probability)
+        history_saved = True
+    except DatabaseUnavailable:
+        LOGGER.warning("Prediction succeeded but history persistence is unavailable")
+    return {
+        "sentiment": sentiment,
+        "positive_probability": probability,
+        "history_saved": history_saved,
+    }
+
+
+@app.get("/predictions/history", response_model=PredictionHistoryResponse)
+def prediction_history(
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=20, ge=1, le=100),
+    sentiment: Literal["positive", "negative"] | None = Query(default=None),
+):
+    try:
+        return list_predictions(page=page, page_size=page_size, sentiment=sentiment)
+    except DatabaseUnavailable as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
+@app.get("/monitoring/report")
+def monitoring_report():
+    """Return input and prediction drift monitoring without claiming accuracy."""
+    if model is None:
+        raise HTTPException(status_code=503, detail="Model artifact is not available")
+    try:
+        return build_monitoring_report(model)
+    except MonitoringUnavailable as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
 
 
 # The production container serves the React build from the same origin. Keeping

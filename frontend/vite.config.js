@@ -10,6 +10,8 @@ export default defineConfig({
       '/ready': 'http://localhost:8000',
       '/mlflow': 'http://localhost:8000',
       '/dataset': 'http://localhost:8000',
+      '/predictions': 'http://localhost:8000',
+      '/monitoring': 'http://localhost:8000',
     },
   },
 })
