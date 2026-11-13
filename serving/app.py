@@ -26,7 +26,6 @@ def _resolve_project_path(value: str) -> Path:
     path = Path(value)
     return path if path.is_absolute() else PROJECT_ROOT / path
 
-
 MODEL_PATH = _resolve_project_path(os.getenv("MODEL_PATH", "artifacts/baseline.joblib"))
 DATA_PATH = _resolve_project_path(os.getenv("DATA_PATH", "data/processed/imdb.json"))
 MLFLOW_TRACKING_URI = os.getenv("MLFLOW_TRACKING_URI", "file:./mlruns")
@@ -96,7 +95,12 @@ def _artifact_links(client: Any, run_id: str) -> list[dict[str, str]]:
     pending = [""]
     while pending:
         path = pending.pop()
-        for item in client.list_artifacts(run_id, path):
+        try:
+            artifacts = client.list_artifacts(run_id, path)
+        except Exception:
+            LOGGER.warning("Artifacts are unavailable for MLflow run %s", run_id)
+            return links
+        for item in artifacts:
             if item.is_dir:
                 pending.append(item.path)
             else:
@@ -263,10 +267,20 @@ def health():
 
 @app.get("/ready")
 def ready():
-    """Kubernetes/load-balancer friendly readiness probe."""
+    """Report readiness only when the model and PostgreSQL are available."""
     if model is None:
-        raise HTTPException(status_code=503, detail="Model artifact is not available")
-    return {"status": "ready"}
+        raise HTTPException(status_code=503, detail="UNREADY: Model is not available")
+
+    db_status = database_status()
+    if not db_status.get("available", False):
+        message = db_status.get("message", "Database is not available")
+        raise HTTPException(status_code=503, detail=f"UNREADY: {message}")
+
+    return {
+        "status": "ready",
+        "model_loaded": True,
+        "database": "connected",
+    }
 
 
 @app.post("/predict", response_model=PredictionResponse)

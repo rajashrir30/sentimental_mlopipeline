@@ -19,9 +19,13 @@ COPY serving/database.py serving/database.py
 COPY serving/monitoring.py serving/monitoring.py
 COPY text_utils.py text_utils.py
 COPY artifacts artifacts
+COPY deployment/data data
+COPY deployment/mlruns mlruns
 COPY --from=frontend-build /frontend/dist frontend/dist
 ENV MODEL_PATH=artifacts/baseline.joblib
 ENV MLFLOW_TRACKING_URI=file:./mlruns
+ENV DATA_PATH=data/processed/imdb.json
+ENV MONITORING_REFERENCE_PATH=data/processed/imdb.json
 RUN addgroup --system app && adduser --system --ingroup app app \
     && chown -R app:app /app
 USER app
