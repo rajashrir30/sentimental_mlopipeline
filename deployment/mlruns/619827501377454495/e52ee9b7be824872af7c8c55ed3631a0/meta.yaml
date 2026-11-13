@@ -1,0 +1,14 @@
+﻿artifact_uri: file:///app/mlruns/619827501377454495/e52ee9b7be824872af7c8c55ed3631a0/artifacts
+end_time: 1792330336213
+entry_point_name: ''
+experiment_id: '619827501377454495'
+lifecycle_stage: active
+run_id: e52ee9b7be824872af7c8c55ed3631a0
+run_name: keras-lstm
+source_name: ''
+source_type: 4
+source_version: ''
+start_time: 1792330335875
+status: 3
+tags: []
+user_id: rajas

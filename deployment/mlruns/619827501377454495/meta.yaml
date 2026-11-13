@@ -1,0 +1,9 @@
+﻿artifact_location: file:///app/mlruns/619827501377454495
+creation_time: 1792329577965
+effective_trace_archival_retention: null
+experiment_id: '619827501377454495'
+last_update_time: 1792329577965
+lifecycle_stage: active
+name: sentiment-mlops-pipeline
+trace_location: null
+workspace: default

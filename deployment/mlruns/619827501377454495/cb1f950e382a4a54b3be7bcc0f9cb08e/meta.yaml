@@ -1,0 +1,14 @@
+﻿artifact_uri: file:///app/mlruns/619827501377454495/cb1f950e382a4a54b3be7bcc0f9cb08e/artifacts
+end_time: 1792329579509
+entry_point_name: ''
+experiment_id: '619827501377454495'
+lifecycle_stage: active
+run_id: cb1f950e382a4a54b3be7bcc0f9cb08e
+run_name: tfidf-logistic-regression
+source_name: ''
+source_type: 4
+source_version: ''
+start_time: 1792329578628
+status: 3
+tags: []
+user_id: rajas
